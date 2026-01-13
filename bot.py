@@ -12,14 +12,17 @@ from telegram.ext import (
     filters
 )
 
+# ---------------- LOGGING ----------------
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
+# ---------------- CONFIG ----------------
 CHKR_API_URL = "https://api.chkr.cc/"
 
+# ---------------- WEBHOOK SETUP ----------------
 def setup_webhook(token: str, webhook_url: str):
     try:
         api_url = f"https://api.telegram.org/bot{token}/setWebhook"
@@ -39,6 +42,7 @@ def setup_webhook(token: str, webhook_url: str):
     except Exception as e:
         logger.error(f"Webhook error: {e}")
 
+# ---------------- API CALL ----------------
 async def check_card(card_data: str):
     try:
         timeout = aiohttp.ClientTimeout(total=30)
@@ -52,6 +56,7 @@ async def check_card(card_data: str):
         logger.error(f"API request error: {e}")
         return None
 
+# ---------------- COMMANDS ----------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     welcome_message = """🔐 CC Checker Bot
 
@@ -69,8 +74,8 @@ Send card details in this format:
 async def check_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         await update.message.reply_text(
-            "❗ Usage:
-`/check 4242424242424242|12|2025|123`",
+            """❗ Usage:
+`/check 4242424242424242|12|2025|123`""",
             parse_mode="Markdown"
         )
         return
@@ -78,16 +83,18 @@ async def check_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     card_data = " ".join(context.args)
     await process_card(update, card_data)
 
+# ---------------- MESSAGE HANDLER ----------------
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     card_data = update.message.text.strip()
     await process_card(update, card_data)
 
+# ---------------- MAIN LOGIC ----------------
 async def process_card(update: Update, card_data: str):
     if "|" not in card_data:
         await update.message.reply_text(
-            "❌ Invalid format
+            """❌ Invalid format
 Use:
-`4242424242424242|12|2025|123`",
+`4242424242424242|12|2025|123`""",
             parse_mode="Markdown"
         )
         return
@@ -128,50 +135,39 @@ Use:
         except:
             pass
 
+# ---------------- ERROR HANDLER ----------------
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     logger.error(f"Update caused error: {context.error}")
 
+# ---------------- MAIN ----------------
 def main():
-    try:
-        token = os.getenv("TELEGRAM_BOT_TOKEN")
-        render_url = os.getenv("RENDER_EXTERNAL_URL")
-        port = int(os.getenv("PORT", 10000))
+    token = os.getenv("TELEGRAM_BOT_TOKEN")
+    render_url = os.getenv("RENDER_EXTERNAL_URL")
+    port = int(os.getenv("PORT", 10000))
 
-        if not token:
-            logger.error("TELEGRAM_BOT_TOKEN not set")
-            raise RuntimeError("TELEGRAM_BOT_TOKEN not set")
-        
-        if not render_url:
-            logger.error("RENDER_EXTERNAL_URL not set")
-            raise RuntimeError("RENDER_EXTERNAL_URL not set")
+    if not token:
+        raise RuntimeError("TELEGRAM_BOT_TOKEN not set")
 
-        logger.info(f"Token: {token[:10]}...")
-        logger.info(f"Render URL: {render_url}")
-        logger.info(f"Port: {port}")
+    if not render_url:
+        raise RuntimeError("RENDER_EXTERNAL_URL not set")
 
-        webhook_url = f"{render_url.rstrip('/')}/{token}"
-        setup_webhook(token, webhook_url)
+    webhook_url = f"{render_url.rstrip('/')}/{token}"
 
-        app = Application.builder().token(token).build()
+    setup_webhook(token, webhook_url)
 
-        app.add_handler(CommandHandler("start", start))
-        app.add_handler(CommandHandler("check", check_command))
-        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-        app.add_error_handler(error_handler)
+    app = Application.builder().token(token).build()
 
-        logger.info(f"Starting webhook on 0.0.0.0:{port}")
-        logger.info(f"Webhook URL: {webhook_url}")
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("check", check_command))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app.add_error_handler(error_handler)
 
-        app.run_webhook(
-            listen="0.0.0.0",
-            port=port,
-            url_path=token,
-            webhook_url=webhook_url
-        )
-        
-    except Exception as e:
-        logger.error(f"Fatal error: {e}")
-        raise
+    app.run_webhook(
+        listen="0.0.0.0",
+        port=port,
+        url_path=token,
+        webhook_url=webhook_url
+    )
 
 if __name__ == "__main__":
     main()
