@@ -3,6 +3,7 @@ import json
 import logging
 import asyncio
 import aiohttp
+import requests
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
@@ -15,6 +16,22 @@ logger = logging.getLogger(__name__)
 
 # CHKR.CC API endpoint
 CHKR_API_URL = "https://api.chkr.cc/"
+
+def setup_webhook(token: str, webhook_url: str):
+    """Setup webhook on startup"""
+    try:
+        api_url = f"https://api.telegram.org/bot{token}/setWebhook"
+        response = requests.post(api_url, json={
+            "url": webhook_url,
+            "allowed_updates": ["message"]
+        })
+        result = response.json()
+        if result.get('ok'):
+            logger.info(f"✅ Webhook set: {webhook_url}")
+        else:
+            logger.error(f"❌ Webhook setup failed: {result}")
+    except Exception as e:
+        logger.error(f"❌ Webhook error: {e}")
 
 async def check_card(card_number: str) -> dict:
     """Check card using CHKR.CC API"""
@@ -132,9 +149,17 @@ def main():
     """Start the bot"""
     # Get token from environment variable
     token = os.getenv('TELEGRAM_BOT_TOKEN')
+    render_url = os.getenv('RENDER_EXTERNAL_URL')
     
     if not token:
         raise ValueError("TELEGRAM_BOT_TOKEN environment variable not set")
+    
+    if not render_url:
+        raise ValueError("RENDER_EXTERNAL_URL environment variable not set")
+    
+    # Setup webhook
+    webhook_url = f"{render_url.rstrip('/')}/{token}"
+    setup_webhook(token, webhook_url)
     
     # Create application
     application = Application.builder().token(token).build()
@@ -150,11 +175,14 @@ def main():
     
     # Start bot
     port = int(os.getenv('PORT', 8443))
+    logger.info(f"Starting bot on port {port}")
+    logger.info(f"Webhook URL: {webhook_url}")
+    
     application.run_webhook(
         listen="0.0.0.0",
         port=port,
         url_path=token,
-        webhook_url=f"{os.getenv('RENDER_EXTERNAL_URL')}/{token}"
+        webhook_url=webhook_url
     )
 
 if __name__ == '__main__':
