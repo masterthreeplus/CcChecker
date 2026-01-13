@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 # CHKR.CC API endpoint
 CHKR_API_URL = "https://api.chkr.cc/"
 
-def setup_webhook(token: str, webhook_url: str):
+def setup_webhook(token, webhook_url):
     """Setup webhook on startup"""
     try:
         api_url = f"https://api.telegram.org/bot{token}/setWebhook"
@@ -27,13 +27,13 @@ def setup_webhook(token: str, webhook_url: str):
         })
         result = response.json()
         if result.get('ok'):
-            logger.info(f"✅ Webhook set: {webhook_url}")
+            logger.info(f"Webhook set: {webhook_url}")
         else:
-            logger.error(f"❌ Webhook setup failed: {result}")
+            logger.error(f"Webhook setup failed: {result}")
     except Exception as e:
-        logger.error(f"❌ Webhook error: {e}")
+        logger.error(f"Webhook error: {e}")
 
-async def check_card(card_number: str) -> dict:
+async def check_card(card_number):
     """Check card using CHKR.CC API"""
     try:
         async with aiohttp.ClientSession() as session:
@@ -47,26 +47,31 @@ async def check_card(card_number: str) -> dict:
         logger.error(f"API Error: {e}")
         return None
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start(update, context):
     """Send welcome message"""
-    welcome_message = """
-🔐 **CC Checker Bot**
+    welcome_message = (
+        "🔐 **CC Checker Bot**
 
-**Usage:**
-Send card details in format:
-`4242424242424242|12|2025|123`
+"
+        "**Usage:**
+"
+        "Send card details in format:
+"
+        "`4242424242424242|12|2025|123`
 
-**Note:** Only **Live** cards will be displayed.
+"
+        "**Note:** Only **Live** cards will be displayed.
 
-Send /check command with card details or just send the card number directly.
-"""
+"
+        "Send /check command with card details or just send the card number directly."
+    )
     await update.message.reply_text(welcome_message, parse_mode='Markdown')
 
-async def check_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def check_command(update, context):
     """Handle /check command"""
     if not context.args:
         await update.message.reply_text(
-            "❌ Please provide card details
+            "Please provide card details
 "
             "Format: `/check 4242424242424242|12|2025|123`",
             parse_mode='Markdown'
@@ -76,31 +81,29 @@ async def check_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     card_data = ' '.join(context.args)
     await process_card(update, card_data)
 
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_message(update, context):
     """Handle direct card messages"""
     card_data = update.message.text.strip()
     await process_card(update, card_data)
 
-async def process_card(update: Update, card_data: str):
+async def process_card(update, card_data):
     """Process card check request"""
-    # Validate card format (basic validation)
+    # Validate card format
     if '|' not in card_data:
         await update.message.reply_text(
-            "❌ Invalid format
-"
-            "Use: `4242424242424242|12|2025|123`",
+            "Invalid format. Use: `4242424242424242|12|2025|123`",
             parse_mode='Markdown'
         )
         return
     
     # Send processing message
-    processing_msg = await update.message.reply_text("⏳ Checking card...")
+    processing_msg = await update.message.reply_text("Checking card...")
     
     # Check card
     result = await check_card(card_data)
     
     if not result:
-        await processing_msg.edit_text("❌ API Error. Please try again.")
+        await processing_msg.edit_text("API Error. Please try again.")
         return
     
     # Parse response
@@ -120,28 +123,33 @@ async def process_card(update: Update, card_data: str):
         country_code = country_info.get('code', 'N/A')
         country_emoji = country_info.get('emoji', '')
         
-        response_text = f"""
-✅ **LIVE CARD**
+        response_text = (
+            "**LIVE CARD**
 
-💳 **Card:** `{card_number}`
-🏦 **Bank:** {bank_name}
-💰 **Type:** {card_type}
-🏷️ **Brand:** {brand}
-🌍 **Country:** {country_name} {country_emoji} ({country_code})
+"
+            f"**Card:** `{card_number}`
+"
+            f"**Bank:** {bank_name}
+"
+            f"**Type:** {card_type}
+"
+            f"**Brand:** {brand}
+"
+            f"**Country:** {country_name} {country_emoji} ({country_code})
 
-📝 **Message:** {message}
-"""
+"
+            f"**Message:** {message}"
+        )
         await processing_msg.edit_text(response_text, parse_mode='Markdown')
     else:
         # Delete processing message for non-live cards
         await processing_msg.delete()
-        # Optionally send a brief notification
-        notification = await update.message.reply_text("❌ Card is not Live")
-        # Auto-delete after 3 seconds
+        # Send brief notification
+        notification = await update.message.reply_text("Card is not Live")
         await asyncio.sleep(3)
         await notification.delete()
 
-async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def error_handler(update, context):
     """Log errors"""
     logger.error(f"Update {update} caused error {context.error}")
 
