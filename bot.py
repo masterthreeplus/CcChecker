@@ -1,156 +1,167 @@
 import os
-import json
 import logging
 import asyncio
 import aiohttp
 import requests
 from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    MessageHandler,
+    ContextTypes,
+    filters
+)
 
+# ================= LOGGING =================
 logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
+# ================= CONFIG =================
 CHKR_API_URL = "https://api.chkr.cc/"
 
-def setup_webhook(token, webhook_url):
+# ================= WEBHOOK SETUP =================
+def setup_webhook(token: str, webhook_url: str):
     try:
         api_url = f"https://api.telegram.org/bot{token}/setWebhook"
-        response = requests.post(api_url, json={
-            "url": webhook_url,
-            "allowed_updates": ["message"]
-        })
-        result = response.json()
-        if result.get('ok'):
-            logger.info(f"Webhook set: {webhook_url}")
+        r = requests.post(
+            api_url,
+            json={
+                "url": webhook_url,
+                "allowed_updates": ["message"]
+            },
+            timeout=20
+        )
+        result = r.json()
+        if result.get("ok"):
+            logger.info(f"Webhook set successfully: {webhook_url}")
         else:
             logger.error(f"Webhook setup failed: {result}")
     except Exception as e:
         logger.error(f"Webhook error: {e}")
 
-async def check_card(card_number):
+# ================= API CALL =================
+async def check_card(card_data: str):
     try:
-        async with aiohttp.ClientSession() as session:
+        timeout = aiohttp.ClientTimeout(total=30)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.post(
                 CHKR_API_URL,
-                json={"data": card_number},
-                timeout=aiohttp.ClientTimeout(total=30)
-            ) as response:
-                return await response.json()
+                json={"data": card_data}
+            ) as resp:
+                return await resp.json()
     except Exception as e:
-        logger.error(f"API Error: {e}")
+        logger.error(f"API request error: {e}")
         return None
 
-async def start(update, context):
+# ================= HANDLERS =================
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     welcome_message = """🔐 CC Checker Bot
 
-Usage:
-Send card details in format:
+📌 Usage:
+Send card details in this format:
 `4242424242424242|12|2025|123`
 
-Note: Only Live cards will be displayed.
+📌 Commands:
+/check <card_details>
 
-Send /check command with card details or just send the card number directly."""
-    
-    await update.message.reply_text(welcome_message, parse_mode='Markdown')
+⚠️ Only LIVE cards will be shown.
+"""
+    await update.message.reply_text(welcome_message, parse_mode="Markdown")
 
-async def check_command(update, context):
+async def check_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
-        msg = """Please provide card details
-Format: `/check 4242424242424242|12|2025|123`"""
-        await update.message.reply_text(msg, parse_mode='Markdown')
+        await update.message.reply_text(
+            "❗ Usage:\n`/check 4242424242424242|12|2025|123`",
+            parse_mode="Markdown"
+        )
         return
-    
-    card_data = ' '.join(context.args)
+
+    card_data = " ".join(context.args)
     await process_card(update, card_data)
 
-async def handle_message(update, context):
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     card_data = update.message.text.strip()
     await process_card(update, card_data)
 
-async def process_card(update, card_data):
-    if '|' not in card_data:
+# ================= CARD PROCESS =================
+async def process_card(update: Update, card_data: str):
+    if "|" not in card_data:
         await update.message.reply_text(
-            "Invalid format. Use: `4242424242424242|12|2025|123`",
-            parse_mode='Markdown'
+            "❌ Invalid format\nUse:\n`4242424242424242|12|2025|123`",
+            parse_mode="Markdown"
         )
         return
-    
-    processing_msg = await update.message.reply_text("⏳ Checking card...")
-    
+
+    processing = await update.message.reply_text("⏳ Checking card...")
+
     result = await check_card(card_data)
-    
+
     if not result:
-        await processing_msg.edit_text("❌ API Error. Please try again.")
+        await processing.edit_text("❌ API Error. Try again later.")
         return
-    
-    code = result.get('code', 2)
-    status = result.get('status', 'Unknown')
-    message = result.get('message', 'No message')
-    card_info = result.get('card', {})
-    
-    if code == 1 and status.lower() == 'live':
-        card_number = card_info.get('card', 'N/A')
-        bank_name = card_info.get('bank', 'N/A')
-        card_type = card_info.get('type', 'N/A')
-        brand = card_info.get('brand', 'N/A')
-        country_info = card_info.get('country', {})
-        country_name = country_info.get('name', 'N/A')
-        country_code = country_info.get('code', 'N/A')
-        country_emoji = country_info.get('emoji', '')
-        
-        response_text = f"""✅ LIVE CARD
 
-💳 Card: `{card_number}`
-🏦 Bank: {bank_name}
-💰 Type: {card_type}
-🏷️ Brand: {brand}
-🌍 Country: {country_name} {country_emoji} ({country_code})
+    code = result.get("code")
+    status = str(result.get("status", "")).lower()
+    message = result.get("message", "No message")
+    card = result.get("card", {})
 
-📝 Message: {message}"""
-        
-        await processing_msg.edit_text(response_text, parse_mode='Markdown')
+    if code == 1 and status == "live":
+        country = card.get("country", {})
+
+        text = f"""✅ *LIVE CARD*
+
+💳 Card: `{card.get("card", "N/A")}`
+🏦 Bank: {card.get("bank", "N/A")}
+💰 Type: {card.get("type", "N/A")}
+🏷 Brand: {card.get("brand", "N/A")}
+🌍 Country: {country.get("name", "N/A")} {country.get("emoji", "")} ({country.get("code", "N/A")})
+
+📝 Message: {message}
+"""
+        await processing.edit_text(text, parse_mode="Markdown")
     else:
-        await processing_msg.delete()
-        notification = await update.message.reply_text("❌ Card is not Live")
+        await processing.delete()
+        msg = await update.message.reply_text("❌ Card is NOT Live")
         await asyncio.sleep(3)
-        await notification.delete()
+        await msg.delete()
 
-async def error_handler(update, context):
-    logger.error(f"Update {update} caused error {context.error}")
+# ================= ERROR HANDLER =================
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
+    logger.error(f"Update caused error: {context.error}")
 
+# ================= MAIN =================
 def main():
-    token = os.getenv('TELEGRAM_BOT_TOKEN')
-    render_url = os.getenv('RENDER_EXTERNAL_URL')
-    
+    token = os.getenv("TELEGRAM_BOT_TOKEN")
+    render_url = os.getenv("RENDER_EXTERNAL_URL")
+    port = int(os.getenv("PORT", 8443))
+
     if not token:
-        raise ValueError("TELEGRAM_BOT_TOKEN environment variable not set")
-    
+        raise RuntimeError("TELEGRAM_BOT_TOKEN not set")
     if not render_url:
-        raise ValueError("RENDER_EXTERNAL_URL environment variable not set")
-    
+        raise RuntimeError("RENDER_EXTERNAL_URL not set")
+
     webhook_url = f"{render_url.rstrip('/')}/{token}"
     setup_webhook(token, webhook_url)
-    
-    application = Application.builder().token(token).build()
-    
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("check", check_command))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    application.add_error_handler(error_handler)
-    
-    port = int(os.getenv('PORT', 8443))
-    logger.info(f"Starting bot on port {port}")
+
+    app = Application.builder().token(token).build()
+
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("check", check_command))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app.add_error_handler(error_handler)
+
+    logger.info(f"Bot running on port {port}")
     logger.info(f"Webhook URL: {webhook_url}")
-    
-    application.run_webhook(
+
+    app.run_webhook(
         listen="0.0.0.0",
         port=port,
         url_path=token,
         webhook_url=webhook_url
     )
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
