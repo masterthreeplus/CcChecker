@@ -7,18 +7,15 @@ import requests
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
-# Configure logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# CHKR.CC API endpoint
 CHKR_API_URL = "https://api.chkr.cc/"
 
 def setup_webhook(token, webhook_url):
-    """Setup webhook on startup"""
     try:
         api_url = f"https://api.telegram.org/bot{token}/setWebhook"
         response = requests.post(api_url, json={
@@ -34,7 +31,6 @@ def setup_webhook(token, webhook_url):
         logger.error(f"Webhook error: {e}")
 
 async def check_card(card_number):
-    """Check card using CHKR.CC API"""
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(
@@ -48,47 +44,33 @@ async def check_card(card_number):
         return None
 
 async def start(update, context):
-    """Send welcome message"""
-    welcome_message = (
-        "🔐 **CC Checker Bot**
+    welcome_message = """🔐 CC Checker Bot
 
-"
-        "**Usage:**
-"
-        "Send card details in format:
-"
-        "`4242424242424242|12|2025|123`
+Usage:
+Send card details in format:
+`4242424242424242|12|2025|123`
 
-"
-        "**Note:** Only **Live** cards will be displayed.
+Note: Only Live cards will be displayed.
 
-"
-        "Send /check command with card details or just send the card number directly."
-    )
+Send /check command with card details or just send the card number directly."""
+    
     await update.message.reply_text(welcome_message, parse_mode='Markdown')
 
 async def check_command(update, context):
-    """Handle /check command"""
     if not context.args:
-        await update.message.reply_text(
-            "Please provide card details
-"
-            "Format: `/check 4242424242424242|12|2025|123`",
-            parse_mode='Markdown'
-        )
+        msg = """Please provide card details
+Format: `/check 4242424242424242|12|2025|123`"""
+        await update.message.reply_text(msg, parse_mode='Markdown')
         return
     
     card_data = ' '.join(context.args)
     await process_card(update, card_data)
 
 async def handle_message(update, context):
-    """Handle direct card messages"""
     card_data = update.message.text.strip()
     await process_card(update, card_data)
 
 async def process_card(update, card_data):
-    """Process card check request"""
-    # Validate card format
     if '|' not in card_data:
         await update.message.reply_text(
             "Invalid format. Use: `4242424242424242|12|2025|123`",
@@ -96,23 +78,19 @@ async def process_card(update, card_data):
         )
         return
     
-    # Send processing message
-    processing_msg = await update.message.reply_text("Checking card...")
+    processing_msg = await update.message.reply_text("⏳ Checking card...")
     
-    # Check card
     result = await check_card(card_data)
     
     if not result:
-        await processing_msg.edit_text("API Error. Please try again.")
+        await processing_msg.edit_text("❌ API Error. Please try again.")
         return
     
-    # Parse response
     code = result.get('code', 2)
     status = result.get('status', 'Unknown')
     message = result.get('message', 'No message')
     card_info = result.get('card', {})
     
-    # Only show Live cards (code 1)
     if code == 1 and status.lower() == 'live':
         card_number = card_info.get('card', 'N/A')
         bank_name = card_info.get('bank', 'N/A')
@@ -123,39 +101,27 @@ async def process_card(update, card_data):
         country_code = country_info.get('code', 'N/A')
         country_emoji = country_info.get('emoji', '')
         
-        response_text = (
-            "**LIVE CARD**
+        response_text = f"""✅ LIVE CARD
 
-"
-            f"**Card:** `{card_number}`
-"
-            f"**Bank:** {bank_name}
-"
-            f"**Type:** {card_type}
-"
-            f"**Brand:** {brand}
-"
-            f"**Country:** {country_name} {country_emoji} ({country_code})
+💳 Card: `{card_number}`
+🏦 Bank: {bank_name}
+💰 Type: {card_type}
+🏷️ Brand: {brand}
+🌍 Country: {country_name} {country_emoji} ({country_code})
 
-"
-            f"**Message:** {message}"
-        )
+📝 Message: {message}"""
+        
         await processing_msg.edit_text(response_text, parse_mode='Markdown')
     else:
-        # Delete processing message for non-live cards
         await processing_msg.delete()
-        # Send brief notification
-        notification = await update.message.reply_text("Card is not Live")
+        notification = await update.message.reply_text("❌ Card is not Live")
         await asyncio.sleep(3)
         await notification.delete()
 
 async def error_handler(update, context):
-    """Log errors"""
     logger.error(f"Update {update} caused error {context.error}")
 
 def main():
-    """Start the bot"""
-    # Get token from environment variable
     token = os.getenv('TELEGRAM_BOT_TOKEN')
     render_url = os.getenv('RENDER_EXTERNAL_URL')
     
@@ -165,23 +131,16 @@ def main():
     if not render_url:
         raise ValueError("RENDER_EXTERNAL_URL environment variable not set")
     
-    # Setup webhook
     webhook_url = f"{render_url.rstrip('/')}/{token}"
     setup_webhook(token, webhook_url)
     
-    # Create application
     application = Application.builder().token(token).build()
     
-    # Add handlers
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("check", check_command))
-    application.add_handler(MessageHandler(
-        filters.TEXT & ~filters.COMMAND, 
-        handle_message
-    ))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_error_handler(error_handler)
     
-    # Start bot
     port = int(os.getenv('PORT', 8443))
     logger.info(f"Starting bot on port {port}")
     logger.info(f"Webhook URL: {webhook_url}")
