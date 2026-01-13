@@ -123,40 +123,55 @@ Use:
         await processing.delete()
         msg = await update.message.reply_text("❌ Card is NOT Live")
         await asyncio.sleep(3)
-        await msg.delete()
+        try:
+            await msg.delete()
+        except:
+            pass
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     logger.error(f"Update caused error: {context.error}")
 
 def main():
-    token = os.getenv("TELEGRAM_BOT_TOKEN")
-    render_url = os.getenv("RENDER_EXTERNAL_URL")
-    port = int(os.getenv("PORT", 8443))
+    try:
+        token = os.getenv("TELEGRAM_BOT_TOKEN")
+        render_url = os.getenv("RENDER_EXTERNAL_URL")
+        port = int(os.getenv("PORT", 10000))
 
-    if not token:
-        raise RuntimeError("TELEGRAM_BOT_TOKEN not set")
-    if not render_url:
-        raise RuntimeError("RENDER_EXTERNAL_URL not set")
+        if not token:
+            logger.error("TELEGRAM_BOT_TOKEN not set")
+            raise RuntimeError("TELEGRAM_BOT_TOKEN not set")
+        
+        if not render_url:
+            logger.error("RENDER_EXTERNAL_URL not set")
+            raise RuntimeError("RENDER_EXTERNAL_URL not set")
 
-    webhook_url = f"{render_url.rstrip('/')}/{token}"
-    setup_webhook(token, webhook_url)
+        logger.info(f"Token: {token[:10]}...")
+        logger.info(f"Render URL: {render_url}")
+        logger.info(f"Port: {port}")
 
-    app = Application.builder().token(token).build()
+        webhook_url = f"{render_url.rstrip('/')}/{token}"
+        setup_webhook(token, webhook_url)
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("check", check_command))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    app.add_error_handler(error_handler)
+        app = Application.builder().token(token).build()
 
-    logger.info(f"Bot running on port {port}")
-    logger.info(f"Webhook URL: {webhook_url}")
+        app.add_handler(CommandHandler("start", start))
+        app.add_handler(CommandHandler("check", check_command))
+        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+        app.add_error_handler(error_handler)
 
-    app.run_webhook(
-        listen="0.0.0.0",
-        port=port,
-        url_path=token,
-        webhook_url=webhook_url
-    )
+        logger.info(f"Starting webhook on 0.0.0.0:{port}")
+        logger.info(f"Webhook URL: {webhook_url}")
+
+        app.run_webhook(
+            listen="0.0.0.0",
+            port=port,
+            url_path=token,
+            webhook_url=webhook_url
+        )
+        
+    except Exception as e:
+        logger.error(f"Fatal error: {e}")
+        raise
 
 if __name__ == "__main__":
     main()
