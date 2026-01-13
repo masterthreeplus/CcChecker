@@ -3,6 +3,8 @@ import logging
 import asyncio
 import aiohttp
 import requests
+from html import escape
+
 from telegram import Update
 from telegram.ext import (
     Application,
@@ -58,25 +60,23 @@ async def check_card(card_data: str):
 
 # ---------------- COMMANDS ----------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    welcome_message = """🔐 CC Checker Bot
-
-📌 Usage:
-Send card details in this format:
-`4242424242424242|12|2025|123`
-
-📌 Commands:
-/check <card_details>
-
-⚠️ Only LIVE cards will be shown.
-"""
-    await update.message.reply_text(welcome_message, parse_mode="Markdown")
+    text = (
+        "🔐 <b>CC Checker Bot</b>\n\n"
+        "📌 <b>Usage</b>\n"
+        "Send card details in this format:\n"
+        "<code>4242424242424242|12|2025|123</code>\n\n"
+        "📌 <b>Command</b>\n"
+        "<code>/check 4242424242424242|12|2025|123</code>\n\n"
+        "⚠️ Only LIVE cards will be shown."
+    )
+    await update.message.reply_text(text, parse_mode="HTML")
 
 async def check_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         await update.message.reply_text(
-            """❗ Usage:
-`/check 4242424242424242|12|2025|123`""",
-            parse_mode="Markdown"
+            "❗ <b>Usage</b>\n"
+            "<code>/check 4242424242424242|12|2025|123</code>",
+            parse_mode="HTML"
         )
         return
 
@@ -92,10 +92,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def process_card(update: Update, card_data: str):
     if "|" not in card_data:
         await update.message.reply_text(
-            """❌ Invalid format
-Use:
-`4242424242424242|12|2025|123`""",
-            parse_mode="Markdown"
+            "❌ <b>Invalid format</b>\n"
+            "Use:\n"
+            "<code>4242424242424242|12|2025|123</code>",
+            parse_mode="HTML"
         )
         return
 
@@ -112,20 +112,33 @@ Use:
     message = result.get("message", "No message")
     card = result.get("card", {})
 
+    # ---------------- LIVE CARD ----------------
     if code == 1 and status == "live":
         country = card.get("country", {})
 
-        text = f"""✅ *LIVE CARD*
+        # HTML escape (VERY IMPORTANT)
+        card_num = escape(str(card.get("card", "N/A")))
+        bank = escape(str(card.get("bank", "N/A")))
+        ctype = escape(str(card.get("type", "N/A")))
+        brand = escape(str(card.get("brand", "N/A")))
+        cname = escape(str(country.get("name", "N/A")))
+        cemoji = escape(str(country.get("emoji", "")))
+        ccode = escape(str(country.get("code", "N/A")))
+        msg_safe = escape(str(message))
 
-💳 Card: `{card.get("card", "N/A")}`
-🏦 Bank: {card.get("bank", "N/A")}
-💰 Type: {card.get("type", "N/A")}
-🏷 Brand: {card.get("brand", "N/A")}
-🌍 Country: {country.get("name", "N/A")} {country.get("emoji", "")} ({country.get("code", "N/A")})
+        text = (
+            "✅ <b>LIVE CARD</b>\n\n"
+            f"💳 Card: <code>{card_num}</code>\n"
+            f"🏦 Bank: {bank}\n"
+            f"💰 Type: {ctype}\n"
+            f"🏷 Brand: {brand}\n"
+            f"🌍 Country: {cname} {cemoji} ({ccode})\n\n"
+            f"📝 Message: {msg_safe}"
+        )
 
-📝 Message: {message}
-"""
-        await processing.edit_text(text, parse_mode="Markdown")
+        await processing.edit_text(text, parse_mode="HTML")
+
+    # ---------------- NOT LIVE ----------------
     else:
         await processing.delete()
         msg = await update.message.reply_text("❌ Card is NOT Live")
