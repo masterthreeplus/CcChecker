@@ -61,36 +61,24 @@ async def check_card(card_data: str):
 
 # ---------------- COMMANDS ----------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = (
-        "🔐 <b>CC Checker Bot</b>
+    text = """🔐 <b>CC Checker Bot</b>
 
-"
-        "📌 <b>Usage</b>
-"
-        "Send card details in this format:
-"
-        "<code>4242424242424242|12|2025|123</code>
+📌 <b>Usage</b>
+Send card details in this format:
+<code>4242424242424242|12|2025|123</code>
 
-"
-        "📌 <b>Commands</b>
-"
-        "<code>/check 4242424242424242|12|2025|123</code>
-"
-        "<code>/bulk</code> - Enable bulk checking mode
+📌 <b>Commands</b>
+<code>/check 4242424242424242|12|2025|123</code>
+<code>/bulk</code> - Enable bulk checking mode
 
-"
-        "⚠️ Only LIVE cards will be shown."
-    )
+⚠️ Only LIVE cards will be shown."""
     await update.message.reply_text(text, parse_mode="HTML")
 
 async def check_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
-        await update.message.reply_text(
-            "❗ <b>Usage</b>
-"
-            "<code>/check 4242424242424242|12|2025|123</code>",
-            parse_mode="HTML"
-        )
+        text = """❗ <b>Usage</b>
+<code>/check 4242424242424242|12|2025|123</code>"""
+        await update.message.reply_text(text, parse_mode="HTML")
         return
 
     card_data = " ".join(context.args)
@@ -100,26 +88,17 @@ async def bulk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     bulk_mode[user_id] = []
     
-    await update.message.reply_text(
-        "🔄 <b>Bulk Check Mode Activated</b>
+    text = """🔄 <b>Bulk Check Mode Activated</b>
 
-"
-        "📤 Send multiple card details (one per line)
-"
-        "Example:
-"
-        "<code>4242424242424242|12|2025|123
-"
-        "5555555555554444|01|2026|456
-"
-        "378282246310005|03|2027|789</code>
+📤 Send multiple card details (one per line)
+Example:
+<code>4242424242424242|12|2025|123
+5555555555554444|01|2026|456
+378282246310005|03|2027|789</code>
 
-"
-        "✅ Bot will check all cards and return only LIVE ones
-"
-        "⏳ Processing time depends on number of cards",
-        parse_mode="HTML"
-    )
+✅ Bot will check all cards and return only LIVE ones
+⏳ Processing time depends on number of cards"""
+    await update.message.reply_text(text, parse_mode="HTML")
 
 # ---------------- MESSAGE HANDLER ----------------
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -132,14 +111,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 ') if line.strip() and '|' in line]
         
         if not cards:
-            await update.message.reply_text(
-                "❌ <b>No valid cards found</b>
-"
-                "Make sure each line has format:
-"
-                "<code>4242424242424242|12|2025|123</code>",
-                parse_mode="HTML"
-            )
+            text = """❌ <b>No valid cards found</b>
+Make sure each line has format:
+<code>4242424242424242|12|2025|123</code>"""
+            await update.message.reply_text(text, parse_mode="HTML")
             return
         
         await process_bulk_cards(update, cards, user_id)
@@ -153,8 +128,7 @@ async def process_bulk_cards(update: Update, cards: list, user_id: int):
     total = len(cards)
     processing_msg = await update.message.reply_text(
         f"⏳ <b>Checking {total} cards...</b>
-"
-        f"Please wait, this may take a moment.",
+Please wait, this may take a moment.",
         parse_mode="HTML"
     )
     
@@ -205,37 +179,24 @@ async def process_bulk_cards(update: Update, cards: list, user_id: int):
     # Send results
     if live_cards:
         for card in live_cards:
-            text = (
-                "✅ <b>LIVE CARD</b>
+            text = f"""✅ <b>LIVE CARD</b>
 
-"
-                f"💳 Card: <code>{card['card']}</code>
-"
-                f"🏦 Bank: {card['bank']}
-"
-                f"💰 Type: {card['type']}
-"
-                f"🏷 Brand: {card['brand']}
-"
-                f"🌍 Country: {card['country']}
+💳 Card: <code>{card['card']}</code>
+🏦 Bank: {card['bank']}
+💰 Type: {card['type']}
+🏷 Brand: {card['brand']}
+🌍 Country: {card['country']}
 
-"
-                f"📝 Message: {card['message']}"
-            )
+📝 Message: {card['message']}"""
             await update.message.reply_text(text, parse_mode="HTML")
             await asyncio.sleep(0.5)  # Prevent rate limit
     
     # Send completion message
-    summary = (
-        f"✅ <b>Bulk Check Complete</b>
+    summary = f"""✅ <b>Bulk Check Complete</b>
 
-"
-        f"📊 Total Checked: {total}
-"
-        f"💚 Live Cards: {len(live_cards)}
-"
-        f"❌ Dead Cards: {total - len(live_cards)}"
-    )
+📊 Total Checked: {total}
+💚 Live Cards: {len(live_cards)}
+❌ Dead Cards: {total - len(live_cards)}"""
     await update.message.reply_text(summary, parse_mode="HTML")
     
     # Exit bulk mode
@@ -244,14 +205,10 @@ async def process_bulk_cards(update: Update, cards: list, user_id: int):
 # ---------------- MAIN LOGIC ----------------
 async def process_card(update: Update, card_data: str):
     if "|" not in card_data:
-        await update.message.reply_text(
-            "❌ <b>Invalid format</b>
-"
-            "Use:
-"
-            "<code>4242424242424242|12|2025|123</code>",
-            parse_mode="HTML"
-        )
+        text = """❌ <b>Invalid format</b>
+Use:
+<code>4242424242424242|12|2025|123</code>"""
+        await update.message.reply_text(text, parse_mode="HTML")
         return
 
     processing = await update.message.reply_text("⏳ Checking card...")
@@ -281,23 +238,15 @@ async def process_card(update: Update, card_data: str):
         ccode = escape(str(country.get("code", "N/A")))
         msg_safe = escape(str(message))
 
-        text = (
-            "✅ <b>LIVE CARD</b>
+        text = f"""✅ <b>LIVE CARD</b>
 
-"
-            f"💳 Card: <code>{card_num}</code>
-"
-            f"🏦 Bank: {bank}
-"
-            f"💰 Type: {ctype}
-"
-            f"🏷 Brand: {brand}
-"
-            f"🌍 Country: {cname} {cemoji} ({ccode})
+💳 Card: <code>{card_num}</code>
+🏦 Bank: {bank}
+💰 Type: {ctype}
+🏷 Brand: {brand}
+🌍 Country: {cname} {cemoji} ({ccode})
 
-"
-            f"📝 Message: {msg_safe}"
-        )
+📝 Message: {msg_safe}"""
 
         await processing.edit_text(text, parse_mode="HTML")
 
