@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 # ---------------- CONFIG ----------------
 CHKR_API_URL = "https://api.chkr.cc/"
+bulk_mode = {}  # Store bulk mode state per user
 
 # ---------------- WEBHOOK SETUP ----------------
 def setup_webhook(token: str, webhook_url: str):
@@ -61,12 +62,23 @@ async def check_card(card_data: str):
 # ---------------- COMMANDS ----------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (
-        "🔐 <b>CC Checker Bot</b>\n\n"
-        "📌 <b>Usage</b>\n"
-        "Send card details in this format:\n"
-        "<code>4242424242424242|12|2025|123</code>\n\n"
-        "📌 <b>Command</b>\n"
-        "<code>/check 4242424242424242|12|2025|123</code>\n\n"
+        "🔐 <b>CC Checker Bot</b>
+
+"
+        "📌 <b>Usage</b>
+"
+        "Send card details in this format:
+"
+        "<code>4242424242424242|12|2025|123</code>
+
+"
+        "📌 <b>Commands</b>
+"
+        "<code>/check 4242424242424242|12|2025|123</code>
+"
+        "<code>/bulk</code> - Enable bulk checking mode
+
+"
         "⚠️ Only LIVE cards will be shown."
     )
     await update.message.reply_text(text, parse_mode="HTML")
@@ -74,7 +86,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def check_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         await update.message.reply_text(
-            "❗ <b>Usage</b>\n"
+            "❗ <b>Usage</b>
+"
             "<code>/check 4242424242424242|12|2025|123</code>",
             parse_mode="HTML"
         )
@@ -83,17 +96,159 @@ async def check_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     card_data = " ".join(context.args)
     await process_card(update, card_data)
 
+async def bulk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    bulk_mode[user_id] = []
+    
+    await update.message.reply_text(
+        "🔄 <b>Bulk Check Mode Activated</b>
+
+"
+        "📤 Send multiple card details (one per line)
+"
+        "Example:
+"
+        "<code>4242424242424242|12|2025|123
+"
+        "5555555555554444|01|2026|456
+"
+        "378282246310005|03|2027|789</code>
+
+"
+        "✅ Bot will check all cards and return only LIVE ones
+"
+        "⏳ Processing time depends on number of cards",
+        parse_mode="HTML"
+    )
+
 # ---------------- MESSAGE HANDLER ----------------
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    card_data = update.message.text.strip()
-    await process_card(update, card_data)
+    user_id = update.effective_user.id
+    message_text = update.message.text.strip()
+    
+    # Check if user is in bulk mode
+    if user_id in bulk_mode:
+        cards = [line.strip() for line in message_text.split('
+') if line.strip() and '|' in line]
+        
+        if not cards:
+            await update.message.reply_text(
+                "❌ <b>No valid cards found</b>
+"
+                "Make sure each line has format:
+"
+                "<code>4242424242424242|12|2025|123</code>",
+                parse_mode="HTML"
+            )
+            return
+        
+        await process_bulk_cards(update, cards, user_id)
+    else:
+        # Single card check
+        card_data = message_text
+        await process_card(update, card_data)
+
+# ---------------- BULK PROCESSING ----------------
+async def process_bulk_cards(update: Update, cards: list, user_id: int):
+    total = len(cards)
+    processing_msg = await update.message.reply_text(
+        f"⏳ <b>Checking {total} cards...</b>
+"
+        f"Please wait, this may take a moment.",
+        parse_mode="HTML"
+    )
+    
+    # Process all cards concurrently
+    tasks = [check_card(card) for card in cards]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    
+    live_cards = []
+    
+    for i, result in enumerate(results):
+        if isinstance(result, Exception):
+            logger.error(f"Error checking card {i+1}: {result}")
+            continue
+        
+        if not result:
+            continue
+        
+        code = result.get("code")
+        status = str(result.get("status", "")).lower()
+        
+        if code == 1 and status == "live":
+            card_info = result.get("card", {})
+            message = result.get("message", "No message")
+            country = card_info.get("country", {})
+            
+            # HTML escape
+            card_num = escape(str(card_info.get("card", cards[i])))
+            bank = escape(str(card_info.get("bank", "N/A")))
+            ctype = escape(str(card_info.get("type", "N/A")))
+            brand = escape(str(card_info.get("brand", "N/A")))
+            cname = escape(str(country.get("name", "N/A")))
+            cemoji = escape(str(country.get("emoji", "")))
+            ccode = escape(str(country.get("code", "N/A")))
+            msg_safe = escape(str(message))
+            
+            live_cards.append({
+                "card": card_num,
+                "bank": bank,
+                "type": ctype,
+                "brand": brand,
+                "country": f"{cname} {cemoji} ({ccode})",
+                "message": msg_safe
+            })
+    
+    # Delete processing message
+    await processing_msg.delete()
+    
+    # Send results
+    if live_cards:
+        for card in live_cards:
+            text = (
+                "✅ <b>LIVE CARD</b>
+
+"
+                f"💳 Card: <code>{card['card']}</code>
+"
+                f"🏦 Bank: {card['bank']}
+"
+                f"💰 Type: {card['type']}
+"
+                f"🏷 Brand: {card['brand']}
+"
+                f"🌍 Country: {card['country']}
+
+"
+                f"📝 Message: {card['message']}"
+            )
+            await update.message.reply_text(text, parse_mode="HTML")
+            await asyncio.sleep(0.5)  # Prevent rate limit
+    
+    # Send completion message
+    summary = (
+        f"✅ <b>Bulk Check Complete</b>
+
+"
+        f"📊 Total Checked: {total}
+"
+        f"💚 Live Cards: {len(live_cards)}
+"
+        f"❌ Dead Cards: {total - len(live_cards)}"
+    )
+    await update.message.reply_text(summary, parse_mode="HTML")
+    
+    # Exit bulk mode
+    del bulk_mode[user_id]
 
 # ---------------- MAIN LOGIC ----------------
 async def process_card(update: Update, card_data: str):
     if "|" not in card_data:
         await update.message.reply_text(
-            "❌ <b>Invalid format</b>\n"
-            "Use:\n"
+            "❌ <b>Invalid format</b>
+"
+            "Use:
+"
             "<code>4242424242424242|12|2025|123</code>",
             parse_mode="HTML"
         )
@@ -127,12 +282,20 @@ async def process_card(update: Update, card_data: str):
         msg_safe = escape(str(message))
 
         text = (
-            "✅ <b>LIVE CARD</b>\n\n"
-            f"💳 Card: <code>{card_num}</code>\n"
-            f"🏦 Bank: {bank}\n"
-            f"💰 Type: {ctype}\n"
-            f"🏷 Brand: {brand}\n"
-            f"🌍 Country: {cname} {cemoji} ({ccode})\n\n"
+            "✅ <b>LIVE CARD</b>
+
+"
+            f"💳 Card: <code>{card_num}</code>
+"
+            f"🏦 Bank: {bank}
+"
+            f"💰 Type: {ctype}
+"
+            f"🏷 Brand: {brand}
+"
+            f"🌍 Country: {cname} {cemoji} ({ccode})
+
+"
             f"📝 Message: {msg_safe}"
         )
 
@@ -172,6 +335,7 @@ def main():
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("check", check_command))
+    app.add_handler(CommandHandler("bulk", bulk_command))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_error_handler(error_handler)
 
