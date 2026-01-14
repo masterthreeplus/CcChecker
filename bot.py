@@ -107,8 +107,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Check if user is in bulk mode
     if user_id in bulk_mode:
-        cards = [line.strip() for line in message_text.split('
-') if line.strip() and '|' in line]
+        # ဒီနေရာကို ပြင်ဆင်ထားပါတယ်
+        cards = [
+            line.strip()
+            for line in message_text.splitlines()
+            if line.strip() and '|' in line
+        ]
         
         if not cards:
             text = """❌ <b>No valid cards found</b>
@@ -127,8 +131,7 @@ Make sure each line has format:
 async def process_bulk_cards(update: Update, cards: list, user_id: int):
     total = len(cards)
     processing_msg = await update.message.reply_text(
-        f"⏳ <b>Checking {total} cards...</b>
-Please wait, this may take a moment.",
+        f"⏳ <b>Checking {total} cards...</b>\nPlease wait, this may take a moment.",
         parse_mode="HTML"
     )
     
@@ -174,7 +177,10 @@ Please wait, this may take a moment.",
             })
     
     # Delete processing message
-    await processing_msg.delete()
+    try:
+        await processing_msg.delete()
+    except:
+        pass
     
     # Send results
     if live_cards:
@@ -200,7 +206,8 @@ Please wait, this may take a moment.",
     await update.message.reply_text(summary, parse_mode="HTML")
     
     # Exit bulk mode
-    del bulk_mode[user_id]
+    if user_id in bulk_mode:
+        del bulk_mode[user_id]
 
 # ---------------- MAIN LOGIC ----------------
 async def process_card(update: Update, card_data: str):
@@ -228,7 +235,7 @@ Use:
     if code == 1 and status == "live":
         country = card.get("country", {})
 
-        # HTML escape (VERY IMPORTANT)
+        # HTML escape
         card_num = escape(str(card.get("card", "N/A")))
         bank = escape(str(card.get("bank", "N/A")))
         ctype = escape(str(card.get("type", "N/A")))
@@ -252,7 +259,10 @@ Use:
 
     # ---------------- NOT LIVE ----------------
     else:
-        await processing.delete()
+        try:
+            await processing.delete()
+        except:
+            pass
         msg = await update.message.reply_text("❌ Card is NOT Live")
         await asyncio.sleep(3)
         try:
