@@ -209,6 +209,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = user.id
     message_text = update.message.text.strip()
     
+    # Check for Bulk Mode
     if user_id in bulk_mode:
         cards = [
             line.strip()
@@ -225,6 +226,7 @@ Make sure each line has format:
         
         await process_bulk_cards(update, cards, user_id)
     else:
+        # Check Single Card
         card_data = message_text
         await process_card(update, card_data)
 
@@ -424,7 +426,7 @@ async def main_async():
         port=port,
         url_path=token,
         webhook_url=webhook_url,
-        drop_pending_updates=True,          # ကျန်နေတဲ့ updates ရှင်းဖို့
+        drop_pending_updates=True,
         allowed_updates=["message"]
     )
 
