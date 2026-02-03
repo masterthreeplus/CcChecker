@@ -4,6 +4,7 @@ import asyncio
 import aiohttp
 import requests
 from html import escape
+from datetime import datetime, timezone, timedelta
 
 from telegram import Update
 from telegram.ext import (
@@ -13,6 +14,8 @@ from telegram.ext import (
     ContextTypes,
     filters
 )
+
+from motor.motor_asyncio import AsyncIOMotorClient
 
 # ---------------- LOGGING ----------------
 logging.basicConfig(
@@ -25,25 +28,73 @@ logger = logging.getLogger(__name__)
 CHKR_API_URL = "https://api.chkr.cc/"
 bulk_mode = {}  # Store bulk mode state per user
 
-# ---------------- WEBHOOK SETUP ----------------
-def setup_webhook(token: str, webhook_url: str):
+# MongoDB & Admin Config from environment
+MONGODB_URI = os.getenv("MONGODB_URI")
+MONGODB_DB_NAME = os.getenv("MONGODB_DB_NAME", "cc_checker_bot")
+ADMIN_IDS_STR = os.getenv("ADMIN_IDS", "")
+ADMIN_IDS = [int(uid.strip()) for uid in ADMIN_IDS_STR.split(",") if uid.strip().isdigit()]
+
+# Global MongoDB variables
+mongo_client = None
+db = None
+users_collection = None
+
+# ---------------- MONGODB INIT ----------------
+async def init_mongodb():
+    global mongo_client, db, users_collection
+    
+    if not MONGODB_URI:
+        logger.warning("MONGODB_URI not set → MongoDB logging disabled")
+        return False
+    
     try:
-        api_url = f"https://api.telegram.org/bot{token}/setWebhook"
-        r = requests.post(
-            api_url,
-            json={
-                "url": webhook_url,
-                "allowed_updates": ["message"]
-            },
-            timeout=20
-        )
-        result = r.json()
-        if result.get("ok"):
-            logger.info(f"Webhook set successfully: {webhook_url}")
-        else:
-            logger.error(f"Webhook setup failed: {result}")
+        mongo_client = AsyncIOMotorClient(MONGODB_URI)
+        await mongo_client.admin.command('ping')  # test connection
+        db = mongo_client[MONGODB_DB_NAME]
+        users_collection = db["users"]
+        
+        # Create indexes
+        await users_collection.create_index("user_id", unique=True)
+        await users_collection.create_index("username")
+        await users_collection.create_index("last_active")
+        
+        logger.info("MongoDB connected successfully")
+        return True
     except Exception as e:
-        logger.error(f"Webhook error: {e}")
+        logger.error(f"MongoDB connection failed: {e}")
+        return False
+
+# ---------------- SAVE / UPDATE USER ----------------
+async def upsert_user(user):
+    if not users_collection:
+        return
+    
+    try:
+        await users_collection.update_one(
+            {"user_id": user.id},
+            {
+                "$set": {
+                    "user_id": user.id,
+                    "username": user.username,
+                    "full_name": user.full_name,
+                    "first_name": user.first_name,
+                    "last_name": user.last_name or None,
+                    "language_code": user.language_code,
+                    "is_premium": user.is_premium,
+                    "last_active": datetime.now(timezone.utc),
+                },
+                "$setOnInsert": {
+                    "joined_at": datetime.now(timezone.utc),
+                    "created_at": datetime.now(timezone.utc),
+                    "message_count": 0,
+                    "is_blocked": False,
+                },
+                "$inc": {"message_count": 1}
+            },
+            upsert=True
+        )
+    except Exception as e:
+        logger.error(f"Failed to upsert user {user.id}: {e}")
 
 # ---------------- API CALL ----------------
 async def check_card(card_data: str):
@@ -61,6 +112,9 @@ async def check_card(card_data: str):
 
 # ---------------- COMMANDS ----------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    await upsert_user(user)
+    
     text = """🔐 <b>CC Checker Bot</b>
 
 📌 <b>Usage</b>
@@ -70,6 +124,7 @@ Send card details in this format:
 📌 <b>Commands</b>
 <code>/check 4242424242424242|12|2025|123</code>
 <code>/bulk</code> - Enable bulk checking mode
+<code>/users</code> - (Admin only) View user stats
 
 ⚠️ Only LIVE cards will be shown."""
     await update.message.reply_text(text, parse_mode="HTML")
@@ -85,7 +140,10 @@ async def check_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await process_card(update, card_data)
 
 async def bulk_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
+    user = update.effective_user
+    await upsert_user(user)
+    
+    user_id = user.id
     bulk_mode[user_id] = []
     
     text = """🔄 <b>Bulk Check Mode Activated</b>
@@ -100,14 +158,56 @@ Example:
 ⏳ Processing time depends on number of cards"""
     await update.message.reply_text(text, parse_mode="HTML")
 
+async def users_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    
+    if user_id not in ADMIN_IDS:
+        await update.message.reply_text("🚫 You are not authorized to use this command.")
+        return
+    
+    if not users_collection:
+        await update.message.reply_text("⚠️ Database is not connected.")
+        return
+    
+    try:
+        total = await users_collection.count_documents({})
+        active_7d = await users_collection.count_documents({
+            "last_active": {"$gte": datetime.now(timezone.utc) - timedelta(days=7)}
+        })
+        active_30d = await users_collection.count_documents({
+            "last_active": {"$gte": datetime.now(timezone.utc) - timedelta(days=30)}
+        })
+        
+        recent = await users_collection.find().sort("joined_at", -1).limit(10).to_list(10)
+        
+        text = f"""📊 <b>User Statistics</b>
+
+Total users: <b>{total}</b>
+Active (last 7 days): <b>{active_7d}</b>
+Active (last 30 days): <b>{active_30d}</b>
+
+<b>Latest 10 joined users:</b>\n"""
+        
+        for u in recent:
+            joined = u.get("joined_at", datetime.now()).strftime("%Y-%m-%d")
+            username = f"@{u['username']}" if u.get("username") else "No username"
+            premium = "⭐" if u.get("is_premium") else ""
+            text += f"• {u.get('full_name','?')} {username} {premium} | ID: <code>{u['user_id']}</code> | {joined}\n"
+        
+        await update.message.reply_text(text, parse_mode="HTML")
+    except Exception as e:
+        logger.error(f"Error in /users: {e}")
+        await update.message.reply_text("❌ Error fetching user data.")
+
 # ---------------- MESSAGE HANDLER ----------------
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
+    user = update.effective_user
+    await upsert_user(user)
+    
+    user_id = user.id
     message_text = update.message.text.strip()
     
-    # Check if user is in bulk mode
     if user_id in bulk_mode:
-        # ဒီနေရာကို ပြင်ဆင်ထားပါတယ်
         cards = [
             line.strip()
             for line in message_text.splitlines()
@@ -123,7 +223,6 @@ Make sure each line has format:
         
         await process_bulk_cards(update, cards, user_id)
     else:
-        # Single card check
         card_data = message_text
         await process_card(update, card_data)
 
@@ -135,7 +234,6 @@ async def process_bulk_cards(update: Update, cards: list, user_id: int):
         parse_mode="HTML"
     )
     
-    # Process all cards concurrently
     tasks = [check_card(card) for card in cards]
     results = await asyncio.gather(*tasks, return_exceptions=True)
     
@@ -157,7 +255,6 @@ async def process_bulk_cards(update: Update, cards: list, user_id: int):
             message = result.get("message", "No message")
             country = card_info.get("country", {})
             
-            # HTML escape
             card_num = escape(str(card_info.get("card", cards[i])))
             bank = escape(str(card_info.get("bank", "N/A")))
             ctype = escape(str(card_info.get("type", "N/A")))
@@ -176,13 +273,11 @@ async def process_bulk_cards(update: Update, cards: list, user_id: int):
                 "message": msg_safe
             })
     
-    # Delete processing message
     try:
         await processing_msg.delete()
     except:
         pass
     
-    # Send results
     if live_cards:
         for card in live_cards:
             text = f"""✅ <b>LIVE CARD</b>
@@ -195,9 +290,8 @@ async def process_bulk_cards(update: Update, cards: list, user_id: int):
 
 📝 Message: {card['message']}"""
             await update.message.reply_text(text, parse_mode="HTML")
-            await asyncio.sleep(0.5)  # Prevent rate limit
+            await asyncio.sleep(0.6)  # rate limit safety
     
-    # Send completion message
     summary = f"""✅ <b>Bulk Check Complete</b>
 
 📊 Total Checked: {total}
@@ -205,11 +299,10 @@ async def process_bulk_cards(update: Update, cards: list, user_id: int):
 ❌ Dead Cards: {total - len(live_cards)}"""
     await update.message.reply_text(summary, parse_mode="HTML")
     
-    # Exit bulk mode
     if user_id in bulk_mode:
         del bulk_mode[user_id]
 
-# ---------------- MAIN LOGIC ----------------
+# ---------------- SINGLE CARD PROCESS ----------------
 async def process_card(update: Update, card_data: str):
     if "|" not in card_data:
         text = """❌ <b>Invalid format</b>
@@ -231,11 +324,9 @@ Use:
     message = result.get("message", "No message")
     card = result.get("card", {})
 
-    # ---------------- LIVE CARD ----------------
     if code == 1 and status == "live":
         country = card.get("country", {})
 
-        # HTML escape
         card_num = escape(str(card.get("card", "N/A")))
         bank = escape(str(card.get("bank", "N/A")))
         ctype = escape(str(card.get("type", "N/A")))
@@ -256,8 +347,6 @@ Use:
 📝 Message: {msg_safe}"""
 
         await processing.edit_text(text, parse_mode="HTML")
-
-    # ---------------- NOT LIVE ----------------
     else:
         try:
             await processing.delete()
@@ -288,16 +377,41 @@ def main():
 
     webhook_url = f"{render_url.rstrip('/')}/{token}"
 
-    setup_webhook(token, webhook_url)
+    # Setup webhook
+    try:
+        api_url = f"https://api.telegram.org/bot{token}/setWebhook"
+        r = requests.post(
+            api_url,
+            json={
+                "url": webhook_url,
+                "allowed_updates": ["message"]
+            },
+            timeout=20
+        )
+        result = r.json()
+        if result.get("ok"):
+            logger.info(f"Webhook set successfully: {webhook_url}")
+        else:
+            logger.error(f"Webhook setup failed: {result}")
+    except Exception as e:
+        logger.error(f"Webhook error: {e}")
 
+    # Initialize MongoDB
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(init_mongodb())
+
+    # Build application
     app = Application.builder().token(token).build()
 
+    # Handlers
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("check", check_command))
     app.add_handler(CommandHandler("bulk", bulk_command))
+    app.add_handler(CommandHandler("users", users_command))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_error_handler(error_handler)
 
+    # Run webhook
     app.run_webhook(
         listen="0.0.0.0",
         port=port,
